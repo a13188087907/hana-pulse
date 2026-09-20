@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "pulse",
   "name": "Pulse",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "AI 服务商额度监视器：订阅限额窗口与 API 余额，一屏看全。数据只读本机凭据与服务商官方接口，不回传任何东西。",
   "license": "MIT",
   "minAppVersion": "0.159.0",
@@ -90,11 +90,6 @@
           "ui": { "control": "password" }
         }
       }
-    },
-    "page": {
-      "title": { "zh": "额度诊断", "en": "Pulse diagnostics" },
-      "route": "/page",
-      "icon": "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M2 12h4l3-8 4 16 3-8h6\"/></svg>"
     },
     "widget": {
       "title": { "zh": "额度总览", "en": "Pulse" },

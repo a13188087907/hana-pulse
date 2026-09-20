@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pulse 额度总览</title>
+<style>
+:root{color-scheme:light}
+.theme-warm-paper{--bg:#F5EFE4;--fg:#2A2622;--surface:#FBF7EE;--border:#D8CFBE;--accent:#537D96;--fg-muted:#6B6158;--fg-subtle:#8F867B;--track:#E8E6DC;--accent-light:rgba(83,125,150,.08)}
+.theme-dark{--bg:#141516;--fg:#E8E6E3;--surface:#1C1E20;--border:#343A40;--accent:#6E96AC;--fg-muted:#9AA1A8;--fg-subtle:#7A828A;--track:#2E3338;--accent-light:rgba(110,150,172,.14)}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:transparent}
+body{
+  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+  color:var(--fg);font-size:13px;line-height:1.45;
+  scrollbar-width:thin;scrollbar-color:var(--border) transparent;
+}
+body::-webkit-scrollbar{width:3px}
+body::-webkit-scrollbar-track{background:transparent}
+body::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.wrap{padding:10px 12px}
+.muted{color:var(--fg-muted)}
+.sub{font-size:11px;color:var(--fg-muted);margin-top:4px}
+.warn-text{color:#9D5F4D}
+.crit-text{color:#C05B4A}
+
+.header{display:flex;align-items:baseline;justify-content:space-between;padding:0 2px;margin-bottom:8px}
+.title{font-size:14px;font-weight:600}
+.header-summary{font-size:11px;color:var(--fg-muted)}
+
+.card{
+  background:var(--surface);
+  border:0.5px solid var(--border);
+  border-radius:5px;
+  padding:9px 11px;
+  margin-bottom:7px;
+  cursor:pointer;
+  transition:border-color .12s ease;
+}
+.card:hover{border-color:var(--fg-subtle)}
+.card.open{border-color:var(--accent)}
+.card.degraded{border-style:dashed;cursor:default}
+.card.degraded:hover{border-color:var(--border)}
+
+.card-head{display:flex;align-items:center;gap:7px}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dot-ok{background:var(--fg-subtle)}
+.dot-warn{background:#9D5F4D}
+.dot-crit{background:#C05B4A}
+.dot-degraded{background:transparent;border:1px solid var(--fg-muted)}
+.name{font-size:12.5px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.plan{font-size:11px;color:var(--fg-muted)}
+.tag{font-size:11px;color:var(--fg-muted)}
+
+.metric-row{display:flex;align-items:baseline;gap:7px;margin-top:5px}
+.metric{font-size:20px;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.metric-warn{color:#9D5F4D}
+.metric-crit{color:#C05B4A}
+
+.bar{height:4px;background:var(--track);border-radius:2px;margin-top:6px;overflow:hidden}
+.bar-fill{height:100%;border-radius:2px;transition:width .15s ease}
+.fill-ok{background:var(--fg-subtle)}
+.fill-warn{background:#9D5F4D}
+.fill-crit{background:#C05B4A}
+
+.detail{border-top:0.5px solid var(--border);margin-top:8px;padding-top:8px}
+.detail-window{margin-bottom:8px}
+.detail-row{display:flex;justify-content:space-between;font-size:11px;color:var(--fg-muted);margin-bottom:4px;font-variant-numeric:tabular-nums}
+.detail-foot{display:flex;justify-content:space-between;font-size:11px;color:var(--fg-muted);margin-top:6px}
+
+.empty{border:0.5px dashed var(--border);border-radius:5px;padding:14px 12px;margin-bottom:7px}
+.empty-title{font-size:12.5px;font-weight:600;margin-bottom:4px}
+.load-fail{font-size:11px;color:#C05B4A;padding:4px 2px}
+
+.footer{display:flex;align-items:center;justify-content:space-between;padding:2px 2px 0}
+.footer-time{font-size:11px;color:var(--fg-muted)}
+.footer-actions{display:flex;align-items:center;gap:6px}
+.btn{
+  border:0.5px solid var(--border);border-radius:5px;background:transparent;
+  color:var(--accent);padding:3px 10px;font-size:12px;font-weight:500;cursor:pointer;
+  font-family:inherit;
+}
+.btn:hover{background:var(--accent-light)}
+.btn:disabled{opacity:.5;cursor:default}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"><div class="sub">加载中…</div></div>
+<script>
+(function(){
+"use strict";
+
+var params = new URLSearchParams(window.location.search);
+var theme = params.get("hana-theme") || "warm-paper";
+document.documentElement.className = /dark|midnight|black/i.test(theme) ? "theme-dark" : "theme-warm-paper";
+
+var BASE = window.location.pathname.replace(/\/widget\/?$/, "");
+function apiUrl(path){
+  var token = params.get("token") || "";
+  if(!token) return BASE + path;
+  var sep = path.indexOf("?") >= 0 ? "&" : "?";
+  return BASE + path + sep + "token=" + encodeURIComponent(token);
+}
+
+var state = { snapshot:null, expanded:null, refreshing:false, failed:false };
+
+function fmtCountdown(iso){
+  if(!iso) return null;
+  var ms = new Date(iso).getTime() - Date.now();
+  if(!isFinite(ms)) return null;
+  if(ms <= 0) return "即将重置";
+  var m = Math.floor(ms/60000);
+  if(m >= 1440) return Math.floor(m/1440) + " 天后重置";
+  if(m >= 60) return Math.floor(m/60) + "h " + (m%60) + "m 后重置";
+  return m + "m 后重置";
+}
+function fmtUpdated(iso){
+  if(!iso) return "尚未刷新";
+  var ms = Date.now() - new Date(iso).getTime();
+  if(!isFinite(ms) || ms < 0) return "";
+  if(ms < 60000) return "刚刚更新";
+  if(ms < 3600000) return Math.floor(ms/60000) + " 分钟前更新";
+  return Math.floor(ms/3600000) + " 小时前更新";
+}
+function fmtAmount(amount, currency){
+  var sym = currency === "CNY" ? "¥" : currency === "USD" ? "$" : currency + " ";
+  return sym + Number(amount).toFixed(2);
+}
+function levelOf(used, t){
+  if(used >= t.critical) return "crit";
+  if(used >= t.warn) return "warn";
+  return "ok";
+}
+function esc(s){
+  return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+function cardHtml(r, t, expanded){
+  if(r.status !== "ok"){
+    var label = r.status === "auth_expired" ? "凭据过期" : "读取失败";
+    var hint = r.status === "auth_expired" ? "重新登录后自动恢复" : (r.error || "稍后自动重试");
+    return '<div class="card degraded">' +
+      '<div class="card-head"><span class="dot dot-degraded"></span>' +
+      '<span class="name muted">' + esc(r.name) + '</span>' +
+      '<span class="tag muted">' + label + '</span></div>' +
+      '<div class="sub muted">' + esc(hint) + '</div></div>';
+  }
+
+  var kindLabel = r.kind === "balance" ? "余额" : "订阅";
+  var wins = (r.windows || []).slice().sort(function(a,b){ return b.usedPercent - a.usedPercent; });
+  var primary = wins[0] || null;
+  var lvl = primary ? levelOf(primary.usedPercent, t) : "ok";
+  var h = '<div class="card' + (expanded ? " open" : "") + '" data-pid="' + esc(r.providerId) + '">';
+  h += '<div class="card-head"><span class="dot dot-' + lvl + '"></span>' +
+       '<span class="name">' + esc(r.name) + '</span>';
+  if(r.plan) h += '<span class="plan">' + esc(r.plan) + '</span>';
+  h += '<span class="tag">' + kindLabel + '</span></div>';
+
+  if(r.kind === "balance"){
+    var bal = (r.balances || [])[0];
+    h += '<div class="metric-row"><span class="metric">' +
+      (bal ? esc(fmtAmount(bal.amount, bal.currency)) : "—") + '</span>' +
+      '<span class="sub" style="margin-top:0">API 余额 · 无重置窗口</span></div>';
+  } else if(primary){
+    var remain = Math.round(100 - primary.usedPercent);
+    h += '<div class="metric-row"><span class="metric metric-' + lvl + '">' + remain + '%</span>' +
+         '<span class="sub" style="margin-top:0">剩余 · ' + esc(primary.label) + '</span></div>';
+    h += '<div class="bar"><div class="bar-fill fill-' + lvl + '" style="width:' + Math.min(Math.max(primary.usedPercent,0),100) + '%"></div></div>';
+    h += '<div class="sub ' + (lvl !== "ok" ? (lvl === "warn" ? "warn-text" : "crit-text") : "") + '">' +
+         (fmtCountdown(primary.resetsAt) || "重置时间未知") + '</div>';
+  } else {
+    h += '<div class="sub muted">暂无窗口读数</div>';
+  }
+
+  if(expanded){
+    h += '<div class="detail">';
+    for(var i = 1; i < wins.length; i++){
+      var w = wins[i], wl = levelOf(w.usedPercent, t);
+      h += '<div class="detail-window"><div class="detail-row"><span>' + esc(w.label) + '</span>' +
+        '<span>剩 ' + Math.round(100 - w.usedPercent) + '%' +
+        (fmtCountdown(w.resetsAt) ? " · " + fmtCountdown(w.resetsAt) : "") + '</span></div>' +
+        '<div class="bar"><div class="bar-fill fill-' + wl + '" style="width:' + Math.min(Math.max(w.usedPercent,0),100) + '%"></div></div></div>';
+    }
+    h += '<div class="detail-foot"><span>' + (r.source === "cli-file" ? "本机 CLI 凭据" : "插件配置 API key") + '</span>' +
+         '<span>' + fmtUpdated(r.updatedAt) + '</span></div></div>';
+  }
+  return h + '</div>';
+}
+
+function render(){
+  var app = document.getElementById("app");
+  var snap = state.snapshot;
+  var t = (snap && snap.thresholds) || { warn:75, critical:90 };
+  var readings = ((snap && snap.readings) || []).filter(function(r){ return r.status !== "unconfigured"; });
+
+  var attention = readings.filter(function(r){
+    return r.status === "ok" && (r.windows || []).some(function(w){ return w.usedPercent >= t.warn; });
+  }).length;
+
+  var h = '<div class="header"><span class="title">额度总览</span>' +
+    '<span class="header-summary">' +
+    (readings.length ? readings.length + " 家" + (attention ? " · " + attention + " 家需注意" : "") : "未配置") +
+    '</span></div>';
+
+  if(state.failed) h += '<div class="load-fail">面板数据读取失败，请点右下角刷新重试</div>';
+
+  if(!state.failed && readings.length === 0){
+    h += '<div class="empty"><div class="empty-title">还没有可监视的服务商</div>' +
+      '<div class="sub">配置 API key 或登录 Claude Code / Codex CLI 后自动出现。到 Hana 设置 → 插件 → Pulse 填写 key。</div></div>';
+  }
+
+  for(var i = 0; i < readings.length; i++){
+    h += cardHtml(readings[i], t, state.expanded === readings[i].providerId);
+  }
+
+  h += '<div class="footer"><span class="footer-time">' + fmtUpdated(snap && snap.lastPollAt) + '</span>' +
+    '<span class="footer-actions">' +
+    '<button class="btn" id="pulse-refresh"' + (state.refreshing ? " disabled" : "") + '>' +
+    (state.refreshing ? "刷新中" : "刷新") + '</button></span></div>';
+
+  app.innerHTML = h;
+
+  var cards = app.querySelectorAll(".card[data-pid]");
+  Array.prototype.forEach.call(cards, function(el){
+    el.addEventListener("click", function(){
+      var pid = el.getAttribute("data-pid");
+      state.expanded = state.expanded === pid ? null : pid;
+      render();
+    });
+  });
+  var btn = document.getElementById("pulse-refresh");
+  if(btn) btn.addEventListener("click", doRefresh);
+
+  requestResize();
+}
+
+function requestResize(){
+  var height = document.documentElement.scrollHeight;
+  try { window.parent.postMessage({ type:"resize-request", payload:{ height:height } }, "*"); } catch(e){}
+}
+
+function load(){
+  return fetch(apiUrl("/api/snapshot")).then(function(res){
+    if(!res.ok) throw new Error("http " + res.status);
+    return res.json();
+  }).then(function(data){
+    state.snapshot = data;
+    state.failed = false;
+  }).catch(function(){
+    state.failed = true;
+  }).then(render);
+}
+
+function doRefresh(){
+  if(state.refreshing) return;
+  state.refreshing = true;
+  render();
+  fetch(apiUrl("/api/refresh"), { method:"POST" }).then(function(res){
+    if(!res.ok) throw new Error("http " + res.status);
+    return res.json();
+  }).then(function(data){
+    state.snapshot = data;
+    state.failed = false;
+    state.refreshing = false;
+  }).catch(function(){
+    state.failed = true;
+    state.refreshing = false;
+  }).then(render);
+}
+
+load();
+setInterval(load, 30000);
+
+if(typeof ResizeObserver !== "undefined"){
+  new ResizeObserver(function(){ requestResize(); }).observe(document.documentElement);
+}
+})();
+</script>
+</body>
+</html>

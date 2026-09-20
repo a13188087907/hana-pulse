@@ -33,20 +33,23 @@ HanaAgent 侧边栏插件：把各 AI 服务商的订阅限额与 API 余额拉�
 
 ## 安装
 
-1. 克隆本仓库，进入目录执行 `npm install && npm run build:ui`
-2. 在 Hana 设置中开启「允许 Agent 插件开发工具」
-3. 让 Agent 安装：「把 D:\path\to\pulse 安装为开发插件」，或将整个目录放入 Hana 用户插件目录（`%USERPROFILE%\.hanako\plugins\pulse`）
-4. 启用后，侧边栏出现「额度总览」，页面列表出现「额度诊断」
+无任何构建步骤与外部依赖。将整个目录放入 Hana 用户插件目录：
 
-配置 API key：Hana 设置 → 插件 → Pulse，按需填写对应服务商的 key。
+```
+%USERPROFILE%\.hanako\plugins\pulse
+```
+
+重启 Hana，在 设置 → 插件 中启用 Pulse，侧边栏出现「额度总览」。
+
+配置 API key：Hana 设置 → 插件 → Pulse，按需填写对应服务商的 key。登录过 Claude Code / Codex CLI 的机器无需任何配置，凭据自动发现。
 
 ## 架构
 
 ```
-ui/Panel.tsx          React 面板（卡片列表 + 诊断页），只读缓存
-routes/ui.js          iframe 壳
+views/widget.html     自包含侧边栏面板（内联 CSS/JS，零外部资源）
+routes/ui.js          直接返回 widget.html
 routes/api.js         /api/snapshot /api/refresh /api/discovery
-tools/                Agent 工具（只读）
+tools/                Agent 工具（只读缓存）
 src/
   providers/index.js  服务商声明式描述：凭据在哪、请求发哪、怎么解析
   core/engine.js      引擎：执行描述，归一化读数，单家失败不传染
@@ -61,9 +64,9 @@ src/
 
 这个仓库同时可作为非平凡 Hana 插件的参考实现，几处与文档直觉不同的实测结论：
 
-1. **dev 安装不复制 `node_modules`**：Node 侧代码（index.js / routes / tools）必须零外部依赖，`@hana/plugin-runtime` 的 helper 只在 UI 构建期使用
+1. **widget 用自包含 HTML 最稳**：iframe 壳 + 构建产物（assets/module script）的加载链路在正式安装中容易失败；git-save-load 的模式——单文件 HTML、API 基址从 `location.pathname` 推导、URL 的 token 参数透传到每个 API 请求——是实测可靠的路径
 2. **lifecycle / routes / tools 不共享模块单例**：共享状态要挂在 `this.ctx` 上（class 形式插件，`ctx.pluginStore = ...`），经 `execute(input, ctx)` 的第二参数取得
-3. **插件入口用 class 形式**：`export default class { async onload() { const ctx = this.ctx; ... } }`，裸对象形式的 ctx 与 tools 上下文不互通
+3. **Node 侧代码零外部依赖**：dev 安装不复制 `node_modules`，index.js / routes / tools 只用 Node 内置模块
 
 ## Roadmap
 

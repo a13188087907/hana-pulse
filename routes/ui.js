@@ -1,38 +1,16 @@
+// UI 路由：widget 为自包含 HTML（无构建链、无外部资源依赖），直接读文件返回。
+
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const widgetPath = join(__dirname, "..", "views", "widget.html");
+let cachedHtml = null;
 
 export default function registerPluginUiRoutes(app, ctx) {
-  app.get("/page", (c) => c.html(renderShell(c, ctx, "page")));
-  app.get("/widget", (c) => c.html(renderShell(c, ctx, "widget")));
-}
-
-function renderShell(c, ctx, surface) {
-  const hanaCss = c.req.query("hana-css") || "";
-  const theme = c.req.query("hana-theme") || "inherit";
-  const assetBase = `/api/plugins/${encodeURIComponent(ctx.pluginId)}/assets`;
-  const title = "Pulse";
-
-  return `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${escapeHtml(title)}</title>
-  ${hanaCss ? `<link rel="stylesheet" href="${escapeAttr(hanaCss)}">` : ""}
-  <link rel="stylesheet" href="${assetBase}/panel.css">
-</head>
-<body data-hana-theme="${escapeAttr(theme)}" data-surface="${surface}">
-  <div id="root" data-surface="${surface}"></div>
-  <script type="module" src="${assetBase}/panel.js"></script>
-</body>
-</html>`;
-}
-
-function escapeAttr(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;");
-}
-
-function escapeHtml(value) {
-  return escapeAttr(value).replace(/>/g, "&gt;");
+  app.get("/widget", (c) => {
+    if (!cachedHtml) cachedHtml = readFileSync(widgetPath, "utf-8");
+    return c.html(cachedHtml);
+  });
 }
