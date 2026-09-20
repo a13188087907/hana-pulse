@@ -64,7 +64,7 @@ src/
 
 这个仓库同时可作为非平凡 Hana 插件的参考实现，几处与文档直觉不同的实测结论：
 
-1. **widget 用自包含 HTML 最稳**：iframe 壳 + 构建产物（assets/module script）的加载链路在正式安装中容易失败；git-save-load 的模式——单文件 HTML、API 基址从 `location.pathname` 推导、URL 的 token 参数透传到每个 API 请求——是实测可靠的路径
+1. **iframe 加载后必须立刻 `window.parent.postMessage({ type: "ready" }, "*")`**：宿主的 widget 生命周期钩子在超时内等不到 ready 消息就显示「加载失败」，这是文档没写但必死的协议。resize 用 `{ type: "resize-request", payload: { height } }`。本插件曾因此稳定复现加载失败，根因是读 renderer 源码（`Kc()` 消息解析）才确认的
 2. **lifecycle / routes / tools 不共享模块单例**：共享状态要挂在 `this.ctx` 上（class 形式插件，`ctx.pluginStore = ...`），经 `execute(input, ctx)` 的第二参数取得
 3. **Node 侧代码零外部依赖**：dev 安装不复制 `node_modules`，index.js / routes / tools 只用 Node 内置模块
 
