@@ -1,0 +1,116 @@
+{
+  "manifestVersion": 1,
+  "id": "pulse",
+  "name": "Pulse",
+  "version": "0.1.0",
+  "description": "AI 服务商额度监视器：订阅限额窗口与 API 余额，一屏看全。数据只读本机凭据与服务商官方接口，不回传任何东西。",
+  "license": "MIT",
+  "minAppVersion": "0.159.0",
+  "trust": "full-access",
+  "capabilities": ["network.fetch"],
+  "network": {
+    "allowedHosts": [
+      "api.anthropic.com",
+      "chatgpt.com",
+      "api.kimi.com",
+      "api.deepseek.com",
+      "open.bigmodel.cn",
+      "api.z.ai",
+      "api.minimaxi.com",
+      "api.minimax.io"
+    ],
+    "methods": ["GET"],
+    "defaultTimeoutMs": 15000,
+    "maxResponseBytes": 1048576
+  },
+  "ui": {
+    "hostCapabilities": ["external.open"]
+  },
+  "contributes": {
+    "configuration": {
+      "properties": {
+        "pollIntervalMinutes": {
+          "type": "number",
+          "title": "刷新间隔（分钟）",
+          "description": "后台轮询各服务商额度的时间间隔，1-60，默认 5",
+          "default": 5
+        },
+        "warnThreshold": {
+          "type": "number",
+          "title": "注意阈值（已用 %）",
+          "description": "订阅窗口用量超过该百分比时以琥珀色标记，默认 75",
+          "default": 75
+        },
+        "criticalThreshold": {
+          "type": "number",
+          "title": "告急阈值（已用 %）",
+          "description": "订阅窗口用量超过该百分比时以红色标记，默认 90",
+          "default": 90
+        },
+        "deepseekApiKey": {
+          "type": "string",
+          "title": "DeepSeek API Key",
+          "description": "到 platform.deepseek.com 的 API keys 页获取，用于查询账户余额",
+          "sensitive": true,
+          "ui": { "control": "password" }
+        },
+        "kimiApiKey": {
+          "type": "string",
+          "title": "Kimi Code API Key",
+          "description": "Kimi 编程订阅的 API key，用于查询限额窗口",
+          "sensitive": true,
+          "ui": { "control": "password" }
+        },
+        "zhipuApiKey": {
+          "type": "string",
+          "title": "智谱 GLM Coding API Key",
+          "description": "智谱开放平台（open.bigmodel.cn）GLM Coding Plan 的 API key",
+          "sensitive": true,
+          "ui": { "control": "password" }
+        },
+        "zaiApiKey": {
+          "type": "string",
+          "title": "z.ai API Key",
+          "description": "z.ai（智谱国际站）GLM Coding Plan 的 API key",
+          "sensitive": true,
+          "ui": { "control": "password" }
+        },
+        "minimaxApiKey": {
+          "type": "string",
+          "title": "MiniMax API Key（国内）",
+          "description": "MiniMax 开放平台（api.minimaxi.com）的 API key",
+          "sensitive": true,
+          "ui": { "control": "password" }
+        },
+        "minimax-intlApiKey": {
+          "type": "string",
+          "title": "MiniMax API Key（国际）",
+          "description": "MiniMax 国际站（api.minimax.io）的 API key",
+          "sensitive": true,
+          "ui": { "control": "password" }
+        }
+      }
+    },
+    "page": {
+      "title": { "zh": "额度诊断", "en": "Pulse diagnostics" },
+      "route": "/page",
+      "icon": "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M2 12h4l3-8 4 16 3-8h6\"/></svg>"
+    },
+    "widget": {
+      "title": { "zh": "额度总览", "en": "Pulse" },
+      "route": "/widget",
+      "icon": "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M2 12h4l3-8 4 16 3-8h6\"/></svg>"
+    }
+  },
+  "dev": {
+    "scenarios": [
+      {
+        "id": "smoke-snapshot",
+        "steps": [
+          { "invokeTool": { "name": "get_quota_snapshot", "input": {} } },
+          { "expectToolText": "更新于" }
+        ]
+      }
+    ]
+  }
+}
