@@ -64,6 +64,12 @@ body::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 .metric-crit{color:#C05B4A}
 
 .bar{height:4px;background:var(--track);border-radius:2px;margin-top:6px;overflow:hidden}
+.win-row{display:flex;align-items:center;gap:8px;margin-top:6px}
+.win-label{font-size:11px;color:var(--fg-muted);width:56px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.win-bar{flex:1;margin-top:0}
+.win-pct{font-size:11px;width:64px;text-align:right;font-variant-numeric:tabular-nums;flex-shrink:0}
+.win-reset{margin:2px 0 4px 64px;font-size:11px;color:var(--fg-muted)}
+.win-reset:last-child{margin-bottom:0}
 .bar-fill{height:100%;border-radius:2px;transition:width .15s ease}
 .fill-ok{background:var(--fg-subtle)}
 .fill-warn{background:#9D5F4D}
@@ -128,8 +134,8 @@ function apiUrl(path){
   return BASE + path + sep + "token=" + encodeURIComponent(token);
 }
 
-var state = { snapshot:null, expanded:null, refreshing:false, failed:false, manageOpen:false, discovery:null, saving:{}, saved:{} };
-var dragPid = null, dragOverPid = null, dragOverPos = null, suppressClick = false;
+var state = { snapshot:null, refreshing:false, failed:false, manageOpen:false, discovery:null, saving:{}, saved:{} };
+var dragPid = null, dragOverPid = null, dragOverPos = null;
 
 function resetDrag(app){
   dragPid = null;
@@ -196,11 +202,15 @@ function esc(s){
   return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
-function cardHtml(r, t, expanded){
+function shortLabel(label){
+  return String(label || "限额").replace(/窗口$/, "");
+}
+
+function cardHtml(r, t){
   if(r.status !== "ok"){
     var label = r.status === "auth_expired" ? "凭据过期" : "读取失败";
     var hint = r.status === "auth_expired" ? "重新登录后自动恢复" : (r.error || "稍后自动重试");
-    return '<div class="card degraded">' +
+    return '<div class="card degraded" data-pid="' + esc(r.providerId) + '">' +
       '<div class="card-head"><span class="dot dot-degraded"></span>' +
       '<span class="name muted">' + esc(r.name) + '</span>' +
       '<span class="tag muted">' + label + '</span></div>' +
@@ -209,10 +219,9 @@ function cardHtml(r, t, expanded){
 
   var kindLabel = r.kind === "balance" ? "余额" : "订阅";
   var wins = (r.windows || []).slice().sort(function(a,b){ return b.usedPercent - a.usedPercent; });
-  var primary = wins[0] || null;
-  var lvl = primary ? levelOf(primary.usedPercent, t) : "ok";
-  var h = '<div class="card' + (expanded ? " open" : "") + '" data-pid="' + esc(r.providerId) + '">';
-  h += '<div class="card-head"><span class="dot dot-' + lvl + '"></span>' +
+  var top = wins.length ? levelOf(wins[0].usedPercent, t) : "ok";
+  var h = '<div class="card" data-pid="' + esc(r.providerId) + '">';
+  h += '<div class="card-head"><span class="dot dot-' + top + '"></span>' +
        '<span class="name">' + esc(r.name) + '</span>';
   if(r.plan) h += '<span class="plan">' + esc(r.plan) + '</span>';
   h += '<span class="tag">' + kindLabel + '</span></div>';
@@ -222,28 +231,19 @@ function cardHtml(r, t, expanded){
     h += '<div class="metric-row"><span class="metric">' +
       (bal ? esc(fmtAmount(bal.amount, bal.currency)) : "—") + '</span>' +
       '<span class="sub" style="margin-top:0">API 余额 · 无重置窗口</span></div>';
-  } else if(primary){
-    var remain = Math.round(100 - primary.usedPercent);
-    h += '<div class="metric-row"><span class="metric metric-' + lvl + '">' + remain + '%</span>' +
-         '<span class="sub" style="margin-top:0">剩余 · ' + esc(primary.label) + '</span></div>';
-    h += '<div class="bar"><div class="bar-fill fill-' + lvl + '" style="width:' + Math.min(Math.max(primary.usedPercent,0),100) + '%"></div></div>';
-    h += '<div class="sub ' + (lvl !== "ok" ? (lvl === "warn" ? "warn-text" : "crit-text") : "") + '">' +
-         (fmtCountdown(primary.resetsAt) || "重置时间未知") + '</div>';
-  } else {
+  } else if(wins.length === 0){
     h += '<div class="sub muted">暂无窗口读数</div>';
-  }
-
-  if(expanded){
-    h += '<div class="detail">';
-    for(var i = 1; i < wins.length; i++){
-      var w = wins[i], wl = levelOf(w.usedPercent, t);
-      h += '<div class="detail-window"><div class="detail-row"><span>' + esc(w.label) + '</span>' +
-        '<span>剩 ' + Math.round(100 - w.usedPercent) + '%' +
-        (fmtCountdown(w.resetsAt) ? " · " + fmtCountdown(w.resetsAt) : "") + '</span></div>' +
-        '<div class="bar"><div class="bar-fill fill-' + wl + '" style="width:' + Math.min(Math.max(w.usedPercent,0),100) + '%"></div></div></div>';
+  } else {
+    for(var i = 0; i < wins.length; i++){
+      var w = wins[i];
+      var lvl = levelOf(w.usedPercent, t);
+      var pctClass = lvl === "warn" ? "warn-text" : lvl === "crit" ? "crit-text" : "muted";
+      h += '<div class="win-row">' +
+        '<span class="win-label">' + esc(shortLabel(w.label)) + '</span>' +
+        '<div class="bar win-bar"><div class="bar-fill fill-' + lvl + '" style="width:' + Math.min(Math.max(w.usedPercent,0),100) + '%"></div></div>' +
+        '<span class="win-pct ' + pctClass + '">剩 ' + Math.round(100 - w.usedPercent) + '%</span></div>' +
+        '<div class="win-reset">' + (fmtCountdown(w.resetsAt) || "重置时间未知") + '</div>';
     }
-    h += '<div class="detail-foot"><span>' + (r.source === "cli-file" ? "本机 CLI 凭据" : "插件配置 API key") + '</span>' +
-         '<span>' + fmtUpdated(r.updatedAt) + '</span></div></div>';
   }
   return h + '</div>';
 }
@@ -276,7 +276,7 @@ function render(){
   }
 
   for(var i = 0; i < readings.length; i++){
-    h += cardHtml(readings[i], t, state.expanded === readings[i].providerId);
+    h += cardHtml(readings[i], t);
   }
 
   if(state.manageOpen) h += manageHtml();
@@ -305,11 +305,6 @@ function render(){
   var cards = app.querySelectorAll(".card[data-pid]");
   Array.prototype.forEach.call(cards, function(el){
     var pid = el.getAttribute("data-pid");
-    el.addEventListener("click", function(){
-      if(suppressClick) return;
-      state.expanded = state.expanded === pid ? null : pid;
-      render();
-    });
     el.setAttribute("draggable", "true");
     el.addEventListener("dragstart", function(e){
       dragPid = pid;
@@ -337,8 +332,6 @@ function render(){
       e.preventDefault();
       if(!dragPid || dragPid === pid) return;
       moveCard(dragPid, pid, (e.clientY - el.getBoundingClientRect().top) < el.getBoundingClientRect().height / 2 ? "before" : "after");
-      suppressClick = true;
-      setTimeout(function(){ suppressClick = false; }, 50);
     });
   });
   var btn = document.getElementById("pulse-refresh");
