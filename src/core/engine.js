@@ -54,10 +54,20 @@ export async function fetchProvider(provider, ctx) {
   try {
     response = await ctx.network.fetch(url, { method: "GET", headers, timeoutMs: 15000 });
   } catch (err) {
+    const msg = String(err?.message ?? err);
+    const cause = String(err?.cause?.code ?? err?.cause?.message ?? "");
+    let readable;
+    if (/timeout|timed out/i.test(msg + cause)) {
+      readable = "请求超时，请检查代理或网络连接";
+    } else if (/fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|CERT/i.test(msg + " " + cause)) {
+      readable = "网络连接失败（该服务商可能需要代理，请检查代理或节点状态）";
+    } else {
+      readable = `网络请求失败：${msg}`;
+    }
     return {
       ...base,
       status: "fetch_failed",
-      error: `网络请求失败：${err?.message ?? err}`,
+      error: readable,
       source: cred.source,
       windows: [],
       balances: [],
