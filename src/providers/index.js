@@ -20,8 +20,9 @@ function num(value) {
 
 function windowLabel(seconds) {
   if (!seconds) return "限额窗口";
+  if (seconds >= 28 * DAY) return "月限额";
   if (seconds >= 7 * DAY) return "周限额";
-  if (seconds >= DAY) return `日限额`;
+  if (seconds >= DAY) return "日限额";
   if (seconds >= HOUR) return `${Math.round(seconds / HOUR)} 小时窗口`;
   return `${Math.round(seconds / MINUTE)} 分钟窗口`;
 }
@@ -211,28 +212,60 @@ export const PROVIDERS = [
     credential: { type: "configKey", key: "kimiApiKey" },
     request: (cred) => ({
       url: "https://api.kimi.com/coding/v1/usages",
-      headers: { Authorization: `Bearer ${cred.token}`, Accept: "application/json" },
+      headers: {
+        Authorization: `Bearer ${cred.token}`,
+        Accept: "application/json",
+        // Kimi Code 控制台（api.kimi.com/coding）的 key 与开放平台不通用；UA 来自
+        // 第三方实测项目 kimi-code-usage，缺失可能被拦
+        "User-Agent": "KimiCLI/1.6",
+      },
     }),
+    // 响应形态有多种（ Pulse 的 details[] 、 kimi-code-usage 的 data[] 与 usage+limits[] ），
+    // 逐形态尝试，字段全部宽容取值
     parse(json) {
-      const details = Array.isArray(json?.details) ? json.details : [];
       const windows = [];
-      for (let i = 0; i < details.length; i++) {
-        const d = details[i];
-        const limit = num(d?.limit);
-        const used = num(d?.used);
-        if (!limit || used == null) continue;
-        const win = Array.isArray(json?.windows) ? json.windows[i] : null;
-        const duration = num(win?.duration);
-        const unit = typeof win?.timeUnit === "string" ? win.timeUnit.toLowerCase() : "";
-        const seconds = duration
-          ? duration * (unit.startsWith("hour") ? HOUR : unit.startsWith("day") ? DAY : MINUTE)
-          : null;
+      const pickRow = (item, label, seconds, i) => {
+        if (!item || typeof item !== "object") return;
+        const limit = num(item.limit) ?? num(item.limit_amount);
+        let used = num(item.used) ?? num(item.used_amount);
+        const remaining = num(item.remaining);
+        if (used == null && remaining != null && limit != null) used = limit - remaining;
+        if (!limit || used == null) return;
+        const resetRaw = item.resetTime ?? item.reset_at ?? item.reset_time ?? item.resetAt ?? null;
+        const resetMs = typeof resetRaw === "number" ? (resetRaw > 1e12 ? resetRaw : resetRaw * 1000) : null;
         windows.push({
           id: `kimi.${i}`,
-          label: seconds ? windowLabel(seconds) : "限额窗口",
+          label: typeof (item.name ?? item.title) === "string" ? (item.name ?? item.title) : label,
           usedPercent: Math.min(Math.max((used / limit) * 100, 0), 100),
-          resetsAt: typeof d?.resetTime === "string" ? d.resetTime : null,
+          resetsAt: typeof resetRaw === "string" ? resetRaw : resetMs ? new Date(resetMs).toISOString() : null,
           windowSeconds: seconds,
+        });
+      };
+      const winSeconds = (win) => {
+        const duration = num(win?.duration);
+        const unit = String(win?.timeUnit ?? win?.time_unit ?? "").toLowerCase();
+        if (!duration) return null;
+        if (unit.startsWith("month")) return 30 * DAY;
+        if (unit.startsWith("day")) return duration * DAY;
+        if (unit.startsWith("hour")) return duration * HOUR;
+        return duration * MINUTE;
+      };
+
+      if (Array.isArray(json?.data)) {
+        json.data.forEach((item, i) =>
+          pickRow(item, item?.model_name === "all" ? "周用量" : "限额", null, i));
+      }
+      if (windows.length === 0 && (json?.usage || Array.isArray(json?.limits))) {
+        pickRow(json.usage, "周用量", null, "summary");
+        (Array.isArray(json?.limits) ? json.limits : []).forEach((item, i) => {
+          const detail = item?.detail && typeof item.detail === "object" ? item.detail : item;
+          pickRow(detail, windowLabel(winSeconds(item?.window)), winSeconds(item?.window), i);
+        });
+      }
+      if (windows.length === 0 && Array.isArray(json?.details)) {
+        json.details.forEach((d, i) => {
+          const seconds = Array.isArray(json?.windows) ? winSeconds(json.windows[i]) : null;
+          pickRow(d, seconds ? windowLabel(seconds) : "限额窗口", seconds, i);
         });
       }
       return { plan: json?.user?.membership?.level ?? null, windows };
