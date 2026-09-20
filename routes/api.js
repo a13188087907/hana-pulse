@@ -18,12 +18,30 @@ const WRITABLE_KEYS = new Set(
   PROVIDERS.filter((p) => p.credential?.type === "configKey").map((p) => p.credential.key)
 );
 
+const PROVIDER_IDS = new Set(PROVIDERS.map((p) => p.id));
+
+// 按用户自定义顺序重排读数。未在 order 里的保持原相对顺序排后（JS sort 稳定）。
+function applyOrder(readings, order) {
+  if (!Array.isArray(order) || order.length === 0) return readings;
+  const rank = new Map(order.map((id, i) => [id, i]));
+  return [...readings].sort((a, b) => {
+    const ra = rank.has(a.providerId) ? rank.get(a.providerId) : order.length;
+    const rb = rank.has(b.providerId) ? rank.get(b.providerId) : order.length;
+    return ra - rb;
+  });
+}
+
+async function cardOrder(ctx) {
+  const value = await ctx.config.get("cardOrder");
+  return Array.isArray(value) ? value.filter((id) => PROVIDER_IDS.has(id)) : [];
+}
+
 export default function registerPluginApiRoutes(app, ctx) {
   app.get("/api/snapshot", async (c) => {
     const store = ctx.pluginStore;
     const t = await thresholds(ctx);
     return c.json({
-      readings: store?.getAll() ?? [],
+      readings: applyOrder(store?.getAll() ?? [], await cardOrder(ctx)),
       lastPollAt: store?.lastPollAt ?? null,
       thresholds: t,
       providers: PROVIDERS.map((p) => ({ id: p.id, name: p.name, kind: p.kind })),
@@ -38,7 +56,25 @@ export default function registerPluginApiRoutes(app, ctx) {
     if (!ctx.pluginStore) return c.json({ ok: false, error: "未初始化" });
     const readings = await refreshAll(PROVIDERS, ctx, ctx.pluginStore);
     const t = await thresholds(ctx);
-    return c.json({ ok: true, readings, lastPollAt: ctx.pluginStore.lastPollAt, thresholds: t });
+    return c.json({ ok: true, readings: applyOrder(readings, await cardOrder(ctx)), lastPollAt: ctx.pluginStore.lastPollAt, thresholds: t });
+  });
+
+  // 保存卡片自定义排序（拖拽后调用）
+  app.post("/api/order", async (c) => {
+    let body;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ ok: false, error: "请求格式错误" });
+    }
+    const order = Array.isArray(body?.order) ? body.order.filter((id) => PROVIDER_IDS.has(id)) : null;
+    if (!order) return c.json({ ok: false, error: "order 必须是数组" });
+    try {
+      await ctx.config.set("cardOrder", order);
+    } catch (err) {
+      return c.json({ ok: false, error: `保存失败：${err?.message ?? err}` });
+    }
+    return c.json({ ok: true });
   });
 
   // 面板内保存/清除 API key。空值即清除。保存后立即全量刷新，让新配置的服务商马上上卡。

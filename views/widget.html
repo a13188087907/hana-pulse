@@ -39,6 +39,12 @@ body::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 }
 .card:hover{border-color:var(--fg-subtle)}
 .card.open{border-color:var(--accent)}
+.card[draggable="true"]{user-select:none}
+.card.dragging{opacity:.4}
+.card.drop-before{box-shadow:0 -2px 0 0 var(--accent)}
+.card.drop-after{box-shadow:0 2px 0 0 var(--accent)}
+.btn-danger{color:#C05B4A}
+.btn-danger:hover{background:rgba(192,91,74,.08)}
 .card.degraded{border-style:dashed;cursor:default}
 .card.degraded:hover{border-color:var(--border)}
 
@@ -123,6 +129,41 @@ function apiUrl(path){
 }
 
 var state = { snapshot:null, expanded:null, refreshing:false, failed:false, manageOpen:false, discovery:null, saving:{}, saved:{} };
+var dragPid = null, dragOverPid = null, dragOverPos = null, suppressClick = false;
+
+function resetDrag(app){
+  dragPid = null;
+  dragOverPid = null;
+  dragOverPos = null;
+  Array.prototype.forEach.call(app.querySelectorAll(".card"), function(c){
+    c.classList.remove("dragging", "drop-before", "drop-after");
+  });
+}
+
+function moveCard(fromPid, toPid, pos){
+  if(!state.snapshot || !Array.isArray(state.snapshot.readings)) return;
+  var ids = state.snapshot.readings
+    .filter(function(r){ return r.status !== "unconfigured"; })
+    .map(function(r){ return r.providerId; });
+  var fromIdx = ids.indexOf(fromPid);
+  if(fromIdx < 0 || ids.indexOf(toPid) < 0) return;
+  ids.splice(fromIdx, 1);
+  var insertIdx = ids.indexOf(toPid) + (pos === "after" ? 1 : 0);
+  ids.splice(insertIdx, 0, fromPid);
+  var rank = {};
+  ids.forEach(function(id, i){ rank[id] = i; });
+  state.snapshot.readings.sort(function(a, b){
+    var ra = rank[a.providerId] !== undefined ? rank[a.providerId] : ids.length;
+    var rb = rank[b.providerId] !== undefined ? rank[b.providerId] : ids.length;
+    return ra - rb;
+  });
+  render();
+  fetch(apiUrl("/api/order"), {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({ order: ids })
+  }).catch(function(){});
+}
 
 function fmtCountdown(iso){
   if(!iso) return null;
@@ -255,15 +296,49 @@ function render(){
   var manageBtn = document.getElementById("pulse-manage");
   if(manageBtn) manageBtn.addEventListener("click", toggleManage);
   Array.prototype.forEach.call(app.querySelectorAll("[data-save-key]"), function(btn){
-    btn.addEventListener("click", function(){ saveCredential(btn.getAttribute("data-save-key")); });
+    btn.addEventListener("click", function(){ saveCredential(btn.getAttribute("data-save-key"), false); });
+  });
+  Array.prototype.forEach.call(app.querySelectorAll("[data-del-key]"), function(btn){
+    btn.addEventListener("click", function(){ saveCredential(btn.getAttribute("data-del-key"), true); });
   });
 
   var cards = app.querySelectorAll(".card[data-pid]");
   Array.prototype.forEach.call(cards, function(el){
+    var pid = el.getAttribute("data-pid");
     el.addEventListener("click", function(){
-      var pid = el.getAttribute("data-pid");
+      if(suppressClick) return;
       state.expanded = state.expanded === pid ? null : pid;
       render();
+    });
+    el.setAttribute("draggable", "true");
+    el.addEventListener("dragstart", function(e){
+      dragPid = pid;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", pid);
+      setTimeout(function(){ el.classList.add("dragging"); }, 0);
+    });
+    el.addEventListener("dragend", function(){ resetDrag(app); });
+    el.addEventListener("dragover", function(e){
+      if(!dragPid || dragPid === pid) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      var rect = el.getBoundingClientRect();
+      var pos = (e.clientY - rect.top) < rect.height / 2 ? "before" : "after";
+      if(dragOverPid !== pid || dragOverPos !== pos){
+        dragOverPid = pid;
+        dragOverPos = pos;
+        Array.prototype.forEach.call(app.querySelectorAll(".card"), function(c){
+          c.classList.remove("drop-before", "drop-after");
+        });
+        el.classList.add(pos === "before" ? "drop-before" : "drop-after");
+      }
+    });
+    el.addEventListener("drop", function(e){
+      e.preventDefault();
+      if(!dragPid || dragPid === pid) return;
+      moveCard(dragPid, pid, (e.clientY - el.getBoundingClientRect().top) < el.getBoundingClientRect().height / 2 ? "before" : "after");
+      suppressClick = true;
+      setTimeout(function(){ suppressClick = false; }, 50);
     });
   });
   var btn = document.getElementById("pulse-refresh");
@@ -287,9 +362,10 @@ function manageHtml(){
       h += '<div class="cred-row">' +
         '<span class="cred-name">' + esc(d.name) + '</span>' +
         '<input class="cred-input" type="password" id="cred-' + esc(d.configKey) + '" placeholder="' +
-          (d.configured ? "已配置，输入新 key 覆盖；留空保存即清除" : "粘贴 API key") + '"' + (busy ? " disabled" : "") + '>' +
+          (d.configured ? "已配置，输入新 key 即覆盖" : "粘贴 API key") + '"' + (busy ? " disabled" : "") + '>' +
         '<button class="btn" data-save-key="' + esc(d.configKey) + '"' + (busy ? " disabled" : "") + '>' +
           (busy ? "…" : "保存") + '</button>' +
+        (d.configured ? '<button class="btn btn-danger" data-del-key="' + esc(d.configKey) + '"' + (busy ? " disabled" : "") + '>删除</button>' : '') +
         '<span class="cred-msg">' + esc(msg) + '</span></div>';
     }
   }
@@ -307,10 +383,9 @@ function toggleManage(){
   render();
 }
 
-function saveCredential(configKey){
+function saveCredential(configKey, forceDelete){
   var input = document.getElementById("cred-" + configKey);
-  if(!input) return;
-  var value = input.value.trim();
+  var value = forceDelete ? "" : (input ? input.value.trim() : "");
   state.saving[configKey] = true;
   state.saved[configKey] = "";
   render();
@@ -321,7 +396,8 @@ function saveCredential(configKey){
   }).then(function(res){ return res.json(); }).then(function(data){
     state.saving[configKey] = false;
     if(data.ok){
-      state.saved[configKey] = value ? "已保存" : "已清除";
+      state.saved[configKey] = value ? "已保存" : "已删除";
+      if(input) input.value = "";
       state.snapshot = data;
       state.discovery = null;
       fetch(apiUrl("/api/discovery")).then(function(res){ return res.json(); }).then(function(d){
