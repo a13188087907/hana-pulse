@@ -75,6 +75,22 @@ body::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 .footer{display:flex;align-items:center;justify-content:space-between;padding:2px 2px 0}
 .footer-time{font-size:11px;color:var(--fg-muted)}
 .footer-actions{display:flex;align-items:center;gap:6px}
+
+.manage{
+  border:0.5px solid var(--border);border-radius:5px;
+  padding:9px 11px;margin-bottom:7px;background:var(--surface);
+}
+.manage-title{font-size:11px;color:var(--fg-muted);margin-bottom:8px}
+.cred-row{display:flex;align-items:center;gap:7px;margin-bottom:7px}
+.cred-row:last-child{margin-bottom:0}
+.cred-name{font-size:12px;font-weight:500;flex:0 0 auto;min-width:64px}
+.cred-input{
+  flex:1;min-width:0;border:0.5px solid var(--border);border-radius:4px;
+  background:var(--bg);color:var(--fg);padding:4px 7px;font-size:12px;
+  font-family:inherit;outline:none;
+}
+.cred-input:focus{border-color:var(--accent)}
+.cred-msg{font-size:11px;color:var(--accent);min-width:44px;text-align:right}
 .btn{
   border:0.5px solid var(--border);border-radius:5px;background:transparent;
   color:var(--accent);padding:3px 10px;font-size:12px;font-weight:500;cursor:pointer;
@@ -106,7 +122,7 @@ function apiUrl(path){
   return BASE + path + sep + "token=" + encodeURIComponent(token);
 }
 
-var state = { snapshot:null, expanded:null, refreshing:false, failed:false };
+var state = { snapshot:null, expanded:null, refreshing:false, failed:false, manageOpen:false, discovery:null, saving:{}, saved:{} };
 
 function fmtCountdown(iso){
   if(!iso) return null;
@@ -193,6 +209,11 @@ function cardHtml(r, t, expanded){
 
 function render(){
   var app = document.getElementById("app");
+  // 重绘前保留管理区输入框内容：后台轮询也会触发 render，不能清掉用户输到一半的 key
+  var draftValues = {};
+  Array.prototype.forEach.call(app.querySelectorAll(".cred-input"), function(el){
+    if(el.id) draftValues[el.id] = el.value;
+  });
   var snap = state.snapshot;
   var t = (snap && snap.thresholds) || { warn:75, critical:90 };
   var readings = ((snap && snap.readings) || []).filter(function(r){ return r.status !== "unconfigured"; });
@@ -210,19 +231,32 @@ function render(){
 
   if(!state.failed && readings.length === 0){
     h += '<div class="empty"><div class="empty-title">还没有可监视的服务商</div>' +
-      '<div class="sub">配置 API key 或登录 Claude Code / Codex CLI 后自动出现。到 Hana 设置 → 插件 → Pulse 填写 key。</div></div>';
+      '<div class="sub">点下方「管理」粘贴服务商 API key，或登录 Claude Code / Codex CLI 后自动出现。</div></div>';
   }
 
   for(var i = 0; i < readings.length; i++){
     h += cardHtml(readings[i], t, state.expanded === readings[i].providerId);
   }
 
+  if(state.manageOpen) h += manageHtml();
+
   h += '<div class="footer"><span class="footer-time">' + fmtUpdated(snap && snap.lastPollAt) + '</span>' +
     '<span class="footer-actions">' +
+    '<button class="btn" id="pulse-manage">' + (state.manageOpen ? "收起" : "管理") + '</button>' +
     '<button class="btn" id="pulse-refresh"' + (state.refreshing ? " disabled" : "") + '>' +
     (state.refreshing ? "刷新中" : "刷新") + '</button></span></div>';
 
   app.innerHTML = h;
+
+  Array.prototype.forEach.call(app.querySelectorAll(".cred-input"), function(el){
+    if(el.id && draftValues[el.id] !== undefined) el.value = draftValues[el.id];
+  });
+
+  var manageBtn = document.getElementById("pulse-manage");
+  if(manageBtn) manageBtn.addEventListener("click", toggleManage);
+  Array.prototype.forEach.call(app.querySelectorAll("[data-save-key]"), function(btn){
+    btn.addEventListener("click", function(){ saveCredential(btn.getAttribute("data-save-key")); });
+  });
 
   var cards = app.querySelectorAll(".card[data-pid]");
   Array.prototype.forEach.call(cards, function(el){
@@ -236,6 +270,73 @@ function render(){
   if(btn) btn.addEventListener("click", doRefresh);
 
   requestResize();
+}
+
+function manageHtml(){
+  var items = (state.discovery || []).filter(function(d){ return d.type === "config-key"; });
+  var h = '<div class="manage"><div class="manage-title">服务商 API key（保存在本机插件配置中）</div>';
+  if(!state.discovery){
+    h += '<div class="sub">读取中…</div>';
+  } else if(items.length === 0){
+    h += '<div class="sub">暂无可配置的服务商</div>';
+  } else {
+    for(var i = 0; i < items.length; i++){
+      var d = items[i];
+      var busy = !!state.saving[d.configKey];
+      var msg = state.saved[d.configKey] || "";
+      h += '<div class="cred-row">' +
+        '<span class="cred-name">' + esc(d.name) + '</span>' +
+        '<input class="cred-input" type="password" id="cred-' + esc(d.configKey) + '" placeholder="' +
+          (d.configured ? "已配置，输入新 key 覆盖；留空保存即清除" : "粘贴 API key") + '"' + (busy ? " disabled" : "") + '>' +
+        '<button class="btn" data-save-key="' + esc(d.configKey) + '"' + (busy ? " disabled" : "") + '>' +
+          (busy ? "…" : "保存") + '</button>' +
+        '<span class="cred-msg">' + esc(msg) + '</span></div>';
+    }
+  }
+  return h + '</div>';
+}
+
+function toggleManage(){
+  state.manageOpen = !state.manageOpen;
+  if(state.manageOpen && !state.discovery){
+    fetch(apiUrl("/api/discovery")).then(function(res){ return res.json(); }).then(function(data){
+      state.discovery = data.discovery || [];
+      render();
+    }).catch(function(){ state.discovery = []; render(); });
+  }
+  render();
+}
+
+function saveCredential(configKey){
+  var input = document.getElementById("cred-" + configKey);
+  if(!input) return;
+  var value = input.value.trim();
+  state.saving[configKey] = true;
+  state.saved[configKey] = "";
+  render();
+  fetch(apiUrl("/api/credentials"), {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({ key:configKey, value:value })
+  }).then(function(res){ return res.json(); }).then(function(data){
+    state.saving[configKey] = false;
+    if(data.ok){
+      state.saved[configKey] = value ? "已保存" : "已清除";
+      state.snapshot = data;
+      state.discovery = null;
+      fetch(apiUrl("/api/discovery")).then(function(res){ return res.json(); }).then(function(d){
+        state.discovery = d.discovery || [];
+        render();
+      }).catch(function(){ render(); });
+    } else {
+      state.saved[configKey] = data.error || "失败";
+    }
+    render();
+  }).catch(function(){
+    state.saving[configKey] = false;
+    state.saved[configKey] = "网络错误";
+    render();
+  });
 }
 
 function requestResize(){
