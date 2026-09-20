@@ -1,5 +1,7 @@
 // 数据 API：UI 面板只读缓存；手动刷新走 /api/refresh 立即触发。
 
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { PROVIDERS } from "../src/providers/index.js";
 import { discoverCredentials } from "../src/core/credentials.js";
 import { refreshAll } from "../src/core/engine.js";
@@ -31,9 +33,19 @@ function applyOrder(readings, order) {
   });
 }
 
+// 卡片顺序存 dataDir 文件而非 ctx.config：配置系统只接受 manifest schema 里声明过的
+// 字段，未声明的 key 会被静默丢弃（实测确认，cardOrder 曾因此不落盘）。
+function orderFile(ctx) {
+  return join(ctx.dataDir, "card-order.json");
+}
+
 async function cardOrder(ctx) {
-  const value = await ctx.config.get("cardOrder");
-  return Array.isArray(value) ? value.filter((id) => PROVIDER_IDS.has(id)) : [];
+  try {
+    const raw = JSON.parse(readFileSync(orderFile(ctx), "utf-8"));
+    return Array.isArray(raw?.order) ? raw.order.filter((id) => PROVIDER_IDS.has(id)) : [];
+  } catch {
+    return [];
+  }
 }
 
 export default function registerPluginApiRoutes(app, ctx) {
@@ -70,7 +82,8 @@ export default function registerPluginApiRoutes(app, ctx) {
     const order = Array.isArray(body?.order) ? body.order.filter((id) => PROVIDER_IDS.has(id)) : null;
     if (!order) return c.json({ ok: false, error: "order 必须是数组" });
     try {
-      await ctx.config.set("cardOrder", order);
+      mkdirSync(ctx.dataDir, { recursive: true });
+      writeFileSync(orderFile(ctx), JSON.stringify({ order, updatedAt: new Date().toISOString() }), "utf-8");
     } catch (err) {
       return c.json({ ok: false, error: `保存失败：${err?.message ?? err}` });
     }
