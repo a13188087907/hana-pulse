@@ -90,6 +90,10 @@ body::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 (function(){
 "use strict";
 
+// Hana 宿主在 iframe 加载后等待 {type:"ready"} 消息，超时未收到则显示“加载失败”。
+// 必须最先发出，早于任何异步逻辑。
+try { window.parent.postMessage({ type:"ready" }, "*"); } catch(e){}
+
 var params = new URLSearchParams(window.location.search);
 var theme = params.get("hana-theme") || "warm-paper";
 document.documentElement.className = /dark|midnight|black/i.test(theme) ? "theme-dark" : "theme-warm-paper";
